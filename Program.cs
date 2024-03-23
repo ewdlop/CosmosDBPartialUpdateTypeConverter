@@ -1,12 +1,10 @@
-﻿// See https://aka.ms/new-console-template for more information
-using CosmosDBPartialUpdateTypeConverter;
+﻿using CosmosDBPartialUpdateTypeConverter;
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using System.Collections;
 using System.Reflection;
 
-
-Console.WriteLine("Hello, World!");
+//https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started?tabs=dotnet
 
 
 PatchOperationList patchOperationList = new()
