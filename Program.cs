@@ -1,19 +1,122 @@
-﻿
-
-// See https://aka.ms/new-console-template for more information
-using CosmosDBPartialUpdateTypeConverter;
+﻿// See https://aka.ms/new-console-template for more information
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
+using System.Collections;
 using System.Reflection;
 
 
 Console.WriteLine("Hello, World!");
 
-
 //Not done yet
 
 namespace CosmosDBPartialUpdateTypeConverter
 {
+    public class PatchOperationList(List<PatchOperation> _patchOperations) : IList<PatchOperation>, IReadOnlyList<PatchOperation>
+    {
+
+        public static explicit operator PatchOperationList(List<PatchOperation> patchOperations) => new(patchOperations);
+        public static explicit operator PatchOperationList(PatchOperation[] patchOperations) => new([.. patchOperations]);
+        public static explicit operator PatchOperationList(PatchOperation patchOperation) => new([patchOperation]);
+        
+        public PatchOperationList() : this([]) { }
+        
+        public PatchOperationList(IEnumerable<PatchOperation> patchOperations) : this(patchOperations.ToList()) { }
+        
+        public PatchOperationList(PatchOperation patchOperation) : this([patchOperation]) { }
+        
+        public int Count => _patchOperations.Count;
+        
+        public PatchOperation this[int index]
+        {
+            get => _patchOperations[index];
+            set => _patchOperations[index] = value;
+        }
+
+        public PatchOperationListBuilder Builder => new(_patchOperations);
+
+        public bool IsReadOnly => false;
+
+        PatchOperation IList<PatchOperation>.this[int index] 
+        {
+            get => (_patchOperations as IList<PatchOperation>)[index];
+            set => (_patchOperations as IList<PatchOperation>)[index] = value;
+        }
+
+        public void Add(string path, object? value) => _patchOperations.Add(path, value);
+
+        public void Add(JObject value)
+        {
+            ArgumentNullException.ThrowIfNull(value, nameof(value));
+            _patchOperations.Add(value);
+        }
+
+        public void Add<T>(T entity)
+            where T : notnull => _patchOperations.Add(entity);
+
+        public void Add<T>(IEnumerable<T> entities)
+            where T : notnull => _patchOperations.Add(entities);
+
+        public void Add<T>(params T[] entities)
+            where T : notnull => _patchOperations.Add(entities);
+
+        public void Add(object value, Func<PropertyInfo, bool>? propertyInfoFilter = null) => _patchOperations.Add(value, propertyInfoFilter);
+
+        public void AddAppend(string path, object? value) => _patchOperations.AddAppend(path, value);
+
+        public void AddIncrement(string path, long value) => _patchOperations.AddIncrement(path, value);
+
+        public void AddIncrement(string path, double value) => _patchOperations.AddIncrement(path, value);
+
+        public void AddMove(string from, string path) => _patchOperations.AddMove(from, path);
+
+        public void AddRemove(string path) => _patchOperations.AddRemove(path);
+
+        public void AddReplace(string path, object? value) => _patchOperations.AddReplace(path, value);
+
+        public void AddSet(string path, object? value) => _patchOperations.AddSet(path, value);
+
+        public void AddSet(JObject value)
+        {
+            ArgumentNullException.ThrowIfNull(value, nameof(value));
+            _patchOperations.AddSet(value);
+        }
+
+        public void AddSet<T>(T entity)
+            where T : notnull => _patchOperations.AddSet(entity);
+
+        public void AddSet<T>(IEnumerable<T> entities)
+            where T : notnull => _patchOperations.AddSet(entities);
+
+        public void AddSet<T>(params T[] entities)
+            where T : notnull => _patchOperations.AddSet(entities);
+
+        public void AddSet(object value, Func<PropertyInfo, bool>? propertyInfoFilter = null) => _patchOperations.AddSet(value, propertyInfoFilter);
+
+        public void AddSet(IEnumerable<object> values) => _patchOperations.AddSet(values);
+
+        public void AddSet(params object[] values) => _patchOperations.AddSet(values);
+
+        public int IndexOf(PatchOperation item) => _patchOperations.IndexOf(item);
+
+        public void Insert(int index, PatchOperation item) => _patchOperations.Insert(index, item);
+
+        public void RemoveAt(int index) => _patchOperations.RemoveAt(index);
+
+        public void Add(PatchOperation item) => _patchOperations.Add(item);
+
+        public void Clear() => _patchOperations.Clear();
+
+        public bool Contains(PatchOperation item) => _patchOperations.Contains(item);
+
+        public void CopyTo(PatchOperation[] array, int arrayIndex) => _patchOperations.CopyTo(array, arrayIndex);
+
+        public bool Remove(PatchOperation item) => _patchOperations.Remove(item);
+
+        public IEnumerator<PatchOperation> GetEnumerator() => _patchOperations.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => (this as IEnumerable<PatchOperation>).GetEnumerator();
+    }
+
     public static class PatchOperationListExtension
     {
         public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, string path, object? value)
@@ -138,18 +241,21 @@ namespace CosmosDBPartialUpdateTypeConverter
         }
 
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, T entity)
+            where T : notnull
         {
             patchOperations.AddRange(typeof(T).GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity))));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, IEnumerable<T> entities)
+            where T : notnull
         {
             patchOperations.AddRange(entities.SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, params T[] entities)
+            where T : notnull
         {
             patchOperations.AddRange(entities.SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
             return patchOperations;
@@ -295,9 +401,6 @@ namespace CosmosDBPartialUpdateTypeConverter
             return this;
         }
 
-        public List<PatchOperation> Build()
-        {
-            return _patchOperations;
-        }
+        public List<PatchOperation> Build() => _patchOperations;
     }
 }
