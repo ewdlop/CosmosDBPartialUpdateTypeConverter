@@ -232,14 +232,6 @@ namespace CosmosDBPartialUpdateTypeConverter
             return patchOperations;
         }
 
-        //public static List<PatchOperation> Add<T1,T2>(this List<PatchOperation> patchOperations, (T1 value1,T2 value2) tuple)
-        //{
-        //    ArgumentNullException.ThrowIfNull(tuple, nameof(tuple));
-        //    ArgumentNullException.ThrowIfNull(tuple.value1, nameof(tuple.value1));
-        //    patchOperations.Add(PatchOperation.Add(tuple.value1.ToString(), tuple.value2));
-        //    return patchOperations;
-        //}
-
         public static List<PatchOperation> AddAppend(this List<PatchOperation> patchOperations, string path, object? value)
         {
             patchOperations.Add(PatchOperation.Add($"{path}/`", value));
@@ -300,43 +292,64 @@ namespace CosmosDBPartialUpdateTypeConverter
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, T entity)
             where T : class
         {
-            patchOperations.AddRange(typeof(T).GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity))));
+            patchOperations.AddRange(entity switch
+            {
+                string => Enumerable.Empty<PatchOperation>(),
+                _ => typeof(T).GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))
+            });
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, IEnumerable<T> entities)
             where T : class
         {
-            patchOperations.AddRange(entities.SelectMany(entity => typeof(T).GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
+            patchOperations.AddRange(entities.Where(entity => entity is not string)
+                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, params T[] entities)
             where T : class
         {
-            patchOperations.AddRange(entities.SelectMany(entity => typeof(T).GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
+            patchOperations.AddRange(entities.Where(entity => entity is not string)
+                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
             return patchOperations;
         }
 
-        public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, object? value, Func<PropertyInfo, bool>? propertyInfoFilter = null)
+        public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, object value, Func<PropertyInfo, bool>? propertyInfoFilter = null)
         {
             ArgumentNullException.ThrowIfNull(value, nameof(value));
-            patchOperations.AddRange(value.GetType()
-                .GetProperties()
-                .Where(propertyInfoFilter is not null ? propertyInfoFilter : _ => true)
-                .Select(property => PatchOperation.Set(property.Name, property.GetValue(value))));
+            patchOperations.AddRange(value switch
+            {
+                (object item1, object item2) => [PatchOperation.Set(item1.ToString(), item2)],
+                int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
+                _ => value.GetType().GetProperties().Where(propertyInfoFilter is not null ? propertyInfoFilter : _ => true)
+                    .Select(property => PatchOperation.Set(property.Name, property.GetValue(value)))
+            });
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, IEnumerable<object> values)
         {
-            patchOperations.AddRange(values.SelectMany(item => item.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(item)))));
+            patchOperations.AddRange(values.SelectMany(value => value switch
+            {
+                (object item1, object item2) => [PatchOperation.Set(item1.ToString(), item2)],
+                int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
+                _ => value.GetType().GetProperties()
+                    .Select(property => PatchOperation.Set(property.Name, property.GetValue(value)))
+            }));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, params object[] values)
         {
-            patchOperations.AddRange(values.SelectMany(item => item.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(item)))));
+            patchOperations.AddRange(values.SelectMany(value => value switch
+            {
+                (object item1, object item2) => [PatchOperation.Set(item1.ToString(), item2)],
+                int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
+                _ => value.GetType().GetProperties()
+                    .Select(property => PatchOperation.Set(property.Name, property.GetValue(value)))
+            }));
             return patchOperations;
         }
     }
