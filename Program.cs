@@ -18,7 +18,7 @@ PatchOperationList patchOperationList = new()
         { "state", "WA" },
         { "postalCode", "98052" }
     }),
-    Enumerable.Range(0, 10).Select(i => new {}),
+    Enumerable.Range(0, 10).Select(i => new {}), //ignored
     1, //ignored
     new { Name = "John Doe", Age = 42 },
     ("test","123"),
@@ -34,6 +34,7 @@ PatchOperationList patchOperationList4 = PatchOperation.Move("from", "to");
 
 List<PatchOperation> patchOperations = patchOperationList;
 IList<PatchOperation> patchOperations2 = new PatchOperationList();
+IReadOnlyList<PatchOperation> patchOperations3 = patchOperationList;
 
 //Not done yet
 
