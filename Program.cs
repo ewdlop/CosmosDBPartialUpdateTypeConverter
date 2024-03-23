@@ -459,6 +459,6 @@ namespace CosmosDBPartialUpdateTypeConverter
             return this;
         }
 
-        public List<PatchOperation> Build() => _patchOperations;
+        public PatchOperationList Build() => _patchOperations;
     }
 }
