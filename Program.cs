@@ -1,11 +1,12 @@
 ﻿// See https://aka.ms/new-console-template for more information
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
+using System.Reflection;
 
 Console.WriteLine("Hello, World!");
 
 //Not done yet
-public static class PatchOperationsBuilder
+public static class PatchOperationListExtension
 {
     public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, string path, object value)
     {
@@ -46,9 +47,12 @@ public static class PatchOperationsBuilder
         return patchOperations;
     }
 
-    public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, object value)
-    {
-        patchOperations.AddRange(value.GetType().GetProperties().Select(property => PatchOperation.Add(property.Name, property.GetValue(value))));
+    public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, object value, Func<PropertyInfo, bool>? propertyInfoFilter = null)
+    {      
+        patchOperations.AddRange(value.GetType()
+            .GetProperties()
+            .Where(propertyInfoFilter is not null ? propertyInfoFilter : _=>true)
+            .Select(property => PatchOperation.Add(property.Name, property.GetValue(value))));
         return patchOperations;
     }
 
@@ -133,9 +137,12 @@ public static class PatchOperationsBuilder
         return patchOperations;
     }
 
-    public static List<PatchOperation> Set(this List<PatchOperation> patchOperations, object value)
+    public static List<PatchOperation> Set(this List<PatchOperation> patchOperations, object value, Func<PropertyInfo, bool>? propertyInfoFilter = null)
     {
-        patchOperations.AddRange(value.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(value))));
+        patchOperations.AddRange(value.GetType()
+            .GetProperties()
+            .Where(propertyInfoFilter is not null ? propertyInfoFilter : _ => true)
+            .Select(property => PatchOperation.Set(property.Name, property.GetValue(value))));
         return patchOperations;
     }
 
