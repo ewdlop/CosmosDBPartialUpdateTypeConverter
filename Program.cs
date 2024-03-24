@@ -51,6 +51,20 @@ PatchOperationList builder = new PatchOperationListBuilder()
     .WithAdd(new { Label = "label", Number = 41 })
     .Build();
 
+for (int i = 0; i < patchOperationList.Count; i++)
+{
+    Console.WriteLine(patchOperationList[i]);
+}
+
+foreach (var patchOperation in patchOperationList)
+{
+    Console.WriteLine(patchOperation);
+}
+
+patchOperationList.Select(patchOperation => patchOperation.Path).ToList().ForEach(Console.WriteLine);
+
+patchOperationList.ForEach(Console.WriteLine);
+
 //Not done yet
 namespace CosmosDBPartialUpdateTypeConverter
 {
@@ -162,6 +176,8 @@ namespace CosmosDBPartialUpdateTypeConverter
         public IEnumerator<PatchOperation> GetEnumerator() => _patchOperations.GetEnumerator();
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public void ForEach(Action<PatchOperation> action) => _patchOperations.ForEach(action);
     }
 
     public static class PatchOperationExtension
