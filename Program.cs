@@ -2,11 +2,17 @@
 using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using System.Collections;
+using System.Net;
 using System.Reflection;
 
 //https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started?tabs=dotnet
 
+//place holders
+string connectionString = "AccountEndpoint=https://mycosmosaccount.documents.azure.com:443/;AccountKey=mykey==;";
+string databaseId = "myCosmosDBId";
 
+// sample codes
+// still need more testing
 PatchOperationList patchOperationList = new()
 {
     PatchOperation.Add("age", 33),
@@ -39,7 +45,7 @@ patchOperations.Add(PatchOperation.Move("from", "to"), PatchOperation.Move("here
 IList<PatchOperation> patchOperations2 = new PatchOperationList();
 IReadOnlyList<PatchOperation> patchOperations3 = patchOperationList;
 
-PatchOperationList builder = new PatchOperationListBuilder()
+PatchOperationList patchOperationList8 = new PatchOperationListBuilder()
     .With(PatchOperation.Move("from", "to"))
     .WithAdd("age", 70)
     .WithAdd("address", new JObject
@@ -65,6 +71,52 @@ patchOperationList.Select(patchOperation => patchOperation.Path).ToList().ForEac
 
 patchOperationList.ForEach(Console.WriteLine);
 
+//usage of PatchOperationList
+try
+{
+    CosmosClient client = new(connectionString);
+    Database database = client.GetDatabase(databaseId);
+    string partitionKeyPath = "/myPartitionKey";
+    ContainerResponse response = await database.CreateContainerIfNotExistsAsync("myContainer", partitionKeyPath);
+    if (response.StatusCode == HttpStatusCode.Created)
+    {
+        Container container = response.Container;
+        dynamic item = new { id = "myId", name = "myName" };
+        string myPartitionKey = $"{partitionKeyPath}/1";
+        PartitionKey partitionKey = new PartitionKey(myPartitionKey);
+        ItemResponse<dynamic> itemResponse = await container.CreateItemAsync(item, new PartitionKey(myPartitionKey));
+        Console.WriteLine($"Created item in database with id: {itemResponse.Resource.id}");
+
+        //Partial update
+        ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperationList);
+        if(patchResponse.StatusCode == HttpStatusCode.OK)
+        {
+            Console.WriteLine($"Patched item in database with id: {patchResponse.Resource.id}");
+        }
+        else
+        {
+            Console.WriteLine($"Failed to patch item in database with id: {patchResponse.Resource.id}");
+        }
+    }
+    else if (response.StatusCode == HttpStatusCode.OK)
+    {
+        Console.WriteLine("Failed to create container or container already exists");
+    }
+}
+catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound ||
+                                 ex.StatusCode == HttpStatusCode.BadRequest)
+{
+    Console.WriteLine($"CosmosException: {ex}");
+}
+catch (CosmosException ex)
+{
+    Console.WriteLine($"Other CosmosException: {ex}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Exception: {ex}");
+}
+
 //Not done yet
 namespace CosmosDBPartialUpdateTypeConverter
 {
@@ -74,7 +126,7 @@ namespace CosmosDBPartialUpdateTypeConverter
 
         public static implicit operator PatchOperationList(List<PatchOperation> patchOperations) => new(patchOperations);
         public static implicit operator PatchOperationList(PatchOperation[] patchOperations) => new([.. patchOperations]);
-        public static implicit operator PatchOperationList(PatchOperation patchOperation) => new([patchOperation]);
+        public static implicit operator PatchOperationList(PatchOperation patchOperation) => new(patchOperation);
         public static implicit operator List<PatchOperation>(PatchOperationList patchOperation) => patchOperation._patchOperations;
         
         public PatchOperationList() : this([]) { }
