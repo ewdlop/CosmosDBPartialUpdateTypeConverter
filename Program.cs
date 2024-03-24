@@ -80,7 +80,9 @@ namespace CosmosDBPartialUpdateTypeConverter
         public PatchOperationList() : this([]) { }
         
         public PatchOperationList(IList<PatchOperation> patchOperations) => _patchOperations = [.. patchOperations];
-        
+
+        public PatchOperationList(List<PatchOperation> patchOperations) => _patchOperations = [.. patchOperations];
+
         public PatchOperationList(IEnumerable<PatchOperation> patchOperations) : this(patchOperations.ToList()) { }
         
         public PatchOperationList(PatchOperation patchOperation) : this([patchOperation]) { }
