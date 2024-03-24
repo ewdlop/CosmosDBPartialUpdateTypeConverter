@@ -551,6 +551,6 @@ namespace CosmosDBPartialUpdateTypeConverter
             return this;
         }
 
-        public PatchOperationList Build() => _patchOperations;
+        public PatchOperationList Build() => _patchOperations.Where(op=> op is not null).ToList();
     }
 }
