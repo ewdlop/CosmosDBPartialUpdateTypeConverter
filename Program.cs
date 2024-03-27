@@ -8,19 +8,31 @@ using System.Reflection;
 //https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started?tabs=dotnet
 
 //place holders
-string connectionString = "AccountEndpoint=https://mycosmosaccount.documents.azure.com:443/;AccountKey=mykey==;";
-string databaseId = "myCosmosDBId";
+//should fetch the key from the Azure Key Vault
+string connectionString = "";
+string databaseId = "";
+
+dynamic sampleItem = new { id = "myId", name = "myName" };
 
 // sample codes
 // still need more testing
+// need to limit to 10 PatchOperations
+// need to add more error handling
+// need to not forget to add the "/" to the path
 PatchOperationList patchOperationList = new()
 {
-    PatchOperation.Add("age", 33),
-    PatchOperation.Add("address", new JObject
+    PatchOperation.Add("/age", 33),
+    PatchOperation.Add("/address", new JObject
     {
         { "city", "Seattle" },
         { "state", "WA" },
-        { "postalCode", "98052" }
+        { "postalCode", "98052" },
+        { "test", new JObject
+        {
+            { "test1", "123" },
+            { "test2", "456" }
+        }
+        }
     }),
     Enumerable.Range(0, 10).Select(i => new {}), //ignored
     1, //ignored
@@ -32,21 +44,35 @@ PatchOperationList patchOperationList = new()
     ("","",""),//ignored
 };
 
-PatchOperationList patchOperationList2 = [];
+PatchOperationList patchOperationList2 = new()
+{
+    new JObject
+    {
+        { "city", "Seattle" },
+        { "state", "WA" },
+        { "postalCode", "98052" },
+        { "test", new JObject
+        {
+            { "test1", "123" },
+            { "test2", "456" }
+        }
+        }
+    }
+};
 
 PatchOperationList patchOperationList3 = new List<PatchOperation>();
-PatchOperationList patchOperationList4 = PatchOperation.Move("from", "to");
-PatchOperationList patchOperationList5 = [PatchOperation.Move("from", "to"), PatchOperation.Move("here", "there")];
-PatchOperationList patchOperationList6 = new PatchOperationList { PatchOperation.Move("from", "to"), PatchOperation.Move("here", "there") };
-PatchOperationList patchOperationList7 = new PatchOperationList(new List<PatchOperation> { PatchOperation.Move("from", "to"), PatchOperation.Move("here", "there") });
+PatchOperationList patchOperationList4 = PatchOperation.Move("/from", "/to");
+PatchOperationList patchOperationList5 = [PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there")];
+PatchOperationList patchOperationList6 = new PatchOperationList { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") };
+PatchOperationList patchOperationList7 = new PatchOperationList(new List<PatchOperation> { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") });
 
 List<PatchOperation> patchOperations = patchOperationList;
-patchOperations.Add(PatchOperation.Move("from", "to"), PatchOperation.Move("here", "there"));
+patchOperationList3.Add(PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there"));
 IList<PatchOperation> patchOperations2 = new PatchOperationList();
 IReadOnlyList<PatchOperation> patchOperations3 = patchOperationList;
 
 PatchOperationList patchOperationList8 = new PatchOperationListBuilder()
-    .With(PatchOperation.Move("from", "to"))
+    .With(PatchOperation.Move("/from", "/to"))
     .WithAdd("age", 70)
     .WithAdd("address", new JObject
     {
@@ -77,18 +103,23 @@ try
     CosmosClient client = new(connectionString);
     Database database = client.GetDatabase(databaseId);
     string partitionKeyPath = "/myPartitionKey";
-    ContainerResponse response = await database.CreateContainerIfNotExistsAsync("myContainer", partitionKeyPath);
-    if (response.StatusCode == HttpStatusCode.Created)
+    ContainerResponse response = await database.CreateContainerIfNotExistsAsync("myContainer3", partitionKeyPath);
+    if (response.StatusCode == HttpStatusCode.Created || response.StatusCode == HttpStatusCode.OK)
     {
+        Console.WriteLine(response.StatusCode == HttpStatusCode.Created ? "Container created" : "Container already exists");
         Container container = response.Container;
-        dynamic item = new { id = "myId", name = "myName" };
-        string myPartitionKey = $"{partitionKeyPath}/1";
-        PartitionKey partitionKey = new PartitionKey(myPartitionKey);
-        ItemResponse<dynamic> itemResponse = await container.CreateItemAsync(item, new PartitionKey(myPartitionKey));
+        Guid guid = Guid.NewGuid();
+        string itemPartitionKey = "itemPartitionKey";
+        dynamic item = new { id = guid.ToString(), name = "myName", myPartitionKey = itemPartitionKey };
+        string myPartitionKey = $"{itemPartitionKey}";
+
+        dynamic itemResponse = await container.CreateItemAsync(item);
         Console.WriteLine($"Created item in database with id: {itemResponse.Resource.id}");
 
         //Partial update
-        ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperationList);
+        PartitionKey partitionKey = new PartitionKey(myPartitionKey);
+        ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperations);
+
         if(patchResponse.StatusCode == HttpStatusCode.OK)
         {
             Console.WriteLine($"Patched item in database with id: {patchResponse.Resource.id}");
@@ -97,10 +128,17 @@ try
         {
             Console.WriteLine($"Failed to patch item in database with id: {patchResponse.Resource.id}");
         }
-    }
-    else if (response.StatusCode == HttpStatusCode.OK)
-    {
-        Console.WriteLine("Failed to create container or container already exists");
+
+        ItemResponse<dynamic> patchResponse2 = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperationList2);
+
+        if (patchResponse2.StatusCode == HttpStatusCode.OK)
+        {
+            Console.WriteLine($"Patched item in database with id: {patchResponse2.Resource.id}");
+        }
+        else
+        {
+            Console.WriteLine($"Failed to patch item in database with id: {patchResponse2.Resource.id}");
+        }
     }
 }
 catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound ||
@@ -117,9 +155,13 @@ catch (Exception ex)
     Console.WriteLine($"Exception: {ex}");
 }
 
-//Not done yet
 namespace CosmosDBPartialUpdateTypeConverter
 {
+    /// <summary>
+    ///Not done yet
+    ///Need to limit to 10 PatchOperations and more testing
+    ///https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-faq
+    /// </summary>
     public class PatchOperationList : IList<PatchOperation>, IReadOnlyList<PatchOperation>
     {
         private readonly List<PatchOperation> _patchOperations = [];
@@ -161,10 +203,10 @@ namespace CosmosDBPartialUpdateTypeConverter
 
         public void Add(PatchOperation item) => _patchOperations.Add(item);
 
-        public void Add(JObject value)
+        public void Add(JObject jObject)
         {
-            ArgumentNullException.ThrowIfNull(value, nameof(value));
-            _patchOperations.Add(value);
+            ArgumentNullException.ThrowIfNull(jObject, nameof(jObject));
+            _patchOperations.Add(jObject);
         }
 
         public void Add<T>(T entity)
@@ -232,8 +274,13 @@ namespace CosmosDBPartialUpdateTypeConverter
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
         public void ForEach(Action<PatchOperation> action) => _patchOperations.ForEach(action);
+
+        public IReadOnlyList<PatchOperation> AsReadOnly() => _patchOperations.AsReadOnly();
     }
 
+    /// <summary>
+    /// Need more work
+    /// </summary>
     public static class PatchOperationExtension
     {
         public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, params PatchOperation[] entities)
@@ -244,28 +291,25 @@ namespace CosmosDBPartialUpdateTypeConverter
 
         public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, string path, object? value)
         {
-            patchOperations.Add(PatchOperation.Add(path, value));
+            patchOperations.Add(PatchOperation.Add(BuildPath(path), value));
             return patchOperations;
         }
 
         public static List<PatchOperation> Add<T>(this List<PatchOperation> patchOperations, string path, T? value)
         {
-            patchOperations.Add(PatchOperation.Add(path, value));
+            patchOperations.Add(PatchOperation.Add(BuildPath(path), value));
             return patchOperations;
         }
 
-        //TODO
-        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, JObject value)
+        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, JObject jObject)
         {
-            //foreach (var property in value.Properties())
-            //{
-            //    var propertyValue = property.Value.Type == JTokenType.Object || property.Value.Type == JTokenType.Array
-            //        ? property.Value.ToString() // For nested objects or arrays, convert to string
-            //        : (object)property.Value.ToObject(typeof(object)); // Convert simple values to their native types
-
-            //    patchOperations.Add(PatchOperation.Add(property.Path, propertyValue));
-            //}
-
+            ArgumentNullException.ThrowIfNull(jObject, nameof(jObject));
+            foreach (var property in jObject.Properties())
+            {
+                string key = property.Name;
+                JToken value = property.Value;
+                patchOperations.Add(PatchOperation.Add(BuildPath(key), value));
+            }
             return patchOperations;
         }
 
@@ -275,7 +319,7 @@ namespace CosmosDBPartialUpdateTypeConverter
             patchOperations.AddRange(entity switch
             {
                 string => Enumerable.Empty<PatchOperation>(),
-                _ => typeof(T).GetProperties().Select(property => PatchOperation.Add(property.Name, property.GetValue(entity)))
+                _ => typeof(T).GetProperties().Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(entity)))
             });
             return patchOperations;
         }
@@ -284,7 +328,7 @@ namespace CosmosDBPartialUpdateTypeConverter
             where T : class
         {
             patchOperations.AddRange(entities.Where(entity => entity is not string)
-                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Add(property.Name, property.GetValue(entity)))));
+                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(entity)))));
             return patchOperations;
         }
 
@@ -293,8 +337,8 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(entities switch
             {
-                [string item1, string item2] => [PatchOperation.Add(item1, item2)],
-                _ => entities.Where(entity => entity is not string).SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Add(property.Name, property.GetValue(entity))))
+                [string item1, string item2] => [PatchOperation.Add(BuildPath(item1), item2)],
+                _ => entities.Where(entity => entity is not string).SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(entity))))
             });
             return patchOperations;
         }
@@ -304,11 +348,11 @@ namespace CosmosDBPartialUpdateTypeConverter
             ArgumentNullException.ThrowIfNull(value, nameof(value));
             patchOperations.AddRange(value switch
             {
-                (string item1, object item2) => [PatchOperation.Add(item1, item2)],
-                (object item1, object item2) => [ PatchOperation.Add(item1.ToString(), item2)],
+                (string item1, object item2) => [PatchOperation.Add(BuildPath(item1), item2)],
+                (object item1, object item2) => [ PatchOperation.Add(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties().Where(propertyInfoFilter is not null ? propertyInfoFilter : _ => true)
-                    .Select(property => PatchOperation.Add(property.Name, property.GetValue(value)))
+                    .Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(value)))
             });
             return patchOperations;
         }
@@ -317,11 +361,11 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(values.SelectMany(value => value switch
             {
-                (string item1, object item2) => [PatchOperation.Add(item1, item2)],
-                (object item1, object item2) => [PatchOperation.Add(item1.ToString(), item2)],
+                (string item1, object item2) => [PatchOperation.Add(BuildPath(item1), item2)],
+                (object item1, object item2) => [PatchOperation.Add(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties()
-                    .Select(property => PatchOperation.Add(property.Name, property.GetValue(value)))
+                    .Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(value)))
             }));
             return patchOperations;
         }
@@ -330,18 +374,21 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(values.SelectMany(value => value switch
             {
-                (string item1, object item2) => [PatchOperation.Add(item1, item2)],
-                (object item1, object item2) => [PatchOperation.Add(item1.ToString(), item2)],
+                (string item1, object item2) => [PatchOperation.Add(BuildPath(item1), item2)],
+                (object item1, object item2) => [PatchOperation.Add(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties()
-                    .Select(property => PatchOperation.Add(property.Name, property.GetValue(value)))
+                    .Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(value)))
             }));
             return patchOperations;
         }
-
+        
+        //For Appending to an json array
+        //the path must exist first
+        //need more testing for the corner cases
         public static List<PatchOperation> AddAppend(this List<PatchOperation> patchOperations, string path, object? value)
         {
-            patchOperations.Add(PatchOperation.Add($"{path}/`", value));
+            patchOperations.Add(PatchOperation.Add($"/{path}/`", value));
             return patchOperations;
         }
 
@@ -377,28 +424,13 @@ namespace CosmosDBPartialUpdateTypeConverter
 
         public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, string path, object? value)
         {
-            patchOperations.Add(PatchOperation.Set(path, value));
+            patchOperations.Add(PatchOperation.Set(BuildPath(path), value));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddSet<T>(this List<PatchOperation> patchOperations, string path, T? value)
         {
-            patchOperations.Add(PatchOperation.Set(path, value));
-            return patchOperations;
-        }
-
-        //TODO
-        public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, JObject value)
-        {
-            //foreach (var property in value.Properties())
-            //{
-            //    var propertyValue = property.Value.Type == JTokenType.Object || property.Value.Type == JTokenType.Array
-            //        ? property.Value.ToString() // For nested objects or arrays, convert to string
-            //        : (object)property.Value.ToObject(typeof(object)); // Convert simple values to their native types
-
-            //    patchOperations.Add(PatchOperation.Add(property.Path, propertyValue));
-            //}
-
+            patchOperations.Add(PatchOperation.Set(BuildPath(path), value));
             return patchOperations;
         }
 
@@ -408,8 +440,20 @@ namespace CosmosDBPartialUpdateTypeConverter
             patchOperations.AddRange(entity switch
             {
                 string => Enumerable.Empty<PatchOperation>(),
-                _ => typeof(T).GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))
+                _ => typeof(T).GetProperties().Select(property => PatchOperation.Set(BuildPath(property.Name), property.GetValue(entity)))
             });
+            return patchOperations;
+        }
+
+        public static List<PatchOperation> AddSet(this List<PatchOperation> patchOperations, JObject jObject)
+        {
+            ArgumentNullException.ThrowIfNull(jObject, nameof(jObject));
+            foreach (var property in jObject.Properties())
+            {
+                string key = property.Name;
+                JToken value = property.Value;
+                patchOperations.Add(PatchOperation.Set(BuildPath(key), value));
+            }
             return patchOperations;
         }
 
@@ -417,7 +461,7 @@ namespace CosmosDBPartialUpdateTypeConverter
             where T : class
         {
             patchOperations.AddRange(entities.Where(entity => entity is not string)
-                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity)))));
+                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(BuildPath(property.Name), property.GetValue(entity)))));
             return patchOperations;
         }
 
@@ -426,8 +470,8 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(entities switch
             {
-                [string item1, string item2] => [PatchOperation.Set(item1, item2)],
-                _ => entities.Where(entity => entity is not string).SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(property.Name, property.GetValue(entity))))
+                [string item1, string item2] => [PatchOperation.Set(BuildPath(item1), item2)],
+                _ => entities.Where(entity => entity is not string).SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(BuildPath(property.Name), property.GetValue(entity))))
             });
             return patchOperations;
         }
@@ -437,8 +481,8 @@ namespace CosmosDBPartialUpdateTypeConverter
             ArgumentNullException.ThrowIfNull(value, nameof(value));
             patchOperations.AddRange(value switch
             {
-                (string item1, object item2) => [PatchOperation.Set(item1, item2)],
-                (object item1, object item2) => [PatchOperation.Set(item1.ToString(), item2)],
+                (string item1, object item2) => [PatchOperation.Set(BuildPath(item1), item2)],
+                (object item1, object item2) => [PatchOperation.Set(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties().Where(propertyInfoFilter is not null ? propertyInfoFilter : _ => true)
                     .Select(property => PatchOperation.Set(property.Name, property.GetValue(value)))
@@ -450,8 +494,8 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(values.SelectMany(value => value switch
             {
-                (string item1, object item2) => [PatchOperation.Set(item1, item2)],
-                (object item1, object item2) => [PatchOperation.Set(item1.ToString(), item2)],
+                (string item1, object item2) => [PatchOperation.Set(BuildPath(item1), item2)],
+                (object item1, object item2) => [PatchOperation.Set(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties()
                     .Select(property => PatchOperation.Set(property.Name, property.GetValue(value)))
@@ -463,16 +507,26 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(values.SelectMany(value => value switch
             {
-                (string item1, object item2) => [PatchOperation.Set(item1, item2)],
-                (object item1, object item2) => [PatchOperation.Set(item1.ToString(), item2)],
+                (string item1, object item2) => [PatchOperation.Set(BuildPath(item1), item2)],
+                (object item1, object item2) => [PatchOperation.Set(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties()
-                    .Select(property => PatchOperation.Set(property.Name, property.GetValue(value)))
+                    .Select(property => PatchOperation.Set(BuildPath(property.Name), property.GetValue(value)))
             }));
             return patchOperations;
         }
+
+        //Todo
+        //Should use regex to check if string is of the form ^\/[A-Za-z0-9]+$ 
+        //or of the form ^\/[A-Za-z0-9]+\/[A-Za-z0-9]+$, recursively for more than 2 level
+        //for path such as /address/city
+        public static string BuildPath(string path)
+        {
+            return path.StartsWith('/') ? path : $"/{path}";
+        }
     }
 
+    //Possibly need more work
     public class PatchOperationListBuilder(List<PatchOperation> _patchOperations)
     {
         public PatchOperationListBuilder() : this(new List<PatchOperation>()) { }
