@@ -1,5 +1,8 @@
-﻿using CosmosDBPartialUpdateTypeConverter;
+﻿using Azure.Identity;
+using Azure.Security.KeyVault.Secrets;
+using CosmosDBPartialUpdateTypeConverter;
 using Microsoft.Azure.Cosmos;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Collections;
 using System.Net;
@@ -7,10 +10,19 @@ using System.Reflection;
 
 //https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started?tabs=dotnet
 
+
+const string connectionStringSecret = "MyCosmosDBConnectionString";
+const string databaseIdSecret = "MyCosmosDBDatabaseId";
+string azureKeyVaultEndpoint = $"https://kv-ray81081506952833917.vault.azure.net/";
+
+SecretClient secretClient = new SecretClient(new Uri(azureKeyVaultEndpoint), new DefaultAzureCredential(true));
+Azure.Response<KeyVaultSecret> connectionStringSecretResponse = await secretClient.GetSecretAsync(connectionStringSecret);
+Azure.Response<KeyVaultSecret> databaseIdSecretResponse = await secretClient.GetSecretAsync(databaseIdSecret);
+
 //place holders
 //should fetch the key from the Azure Key Vault
-string connectionString = "";
-string databaseId = "";
+string connectionString = connectionStringSecretResponse.Value.Value;
+string databaseId = databaseIdSecretResponse.Value.Value;
 
 dynamic sampleItem = new { id = "myId", name = "myName" };
 
@@ -67,6 +79,16 @@ PatchOperationList patchOperationList6 = new PatchOperationList { PatchOperation
 PatchOperationList patchOperationList7 = new PatchOperationList(new List<PatchOperation> { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") });
 
 List<PatchOperation> patchOperations = patchOperationList;
+patchOperationList.AddIncrement("age", 1);
+patchOperationList.AddIncrement("age", 2);
+patchOperationList.AddIncrement("age", 2);
+patchOperationList.AddIncrement("age", 2);
+patchOperationList.AddIncrement("age", 2);
+patchOperationList.AddIncrement("age", 2);
+patchOperationList.AddMove("test", "test2");
+patchOperationList.AddRemove("test2");
+patchOperationList.AddReplace("age", 55);
+
 patchOperationList3.Add(PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there"));
 IList<PatchOperation> patchOperations2 = new PatchOperationList();
 IReadOnlyList<PatchOperation> patchOperations3 = patchOperationList;
@@ -103,11 +125,11 @@ try
     CosmosClient client = new(connectionString);
     Database database = client.GetDatabase(databaseId);
     string partitionKeyPath = "/myPartitionKey";
-    ContainerResponse response = await database.CreateContainerIfNotExistsAsync("myContainer3", partitionKeyPath);
-    if (response.StatusCode == HttpStatusCode.Created || response.StatusCode == HttpStatusCode.OK)
+    ContainerResponse containerResponse = await database.CreateContainerIfNotExistsAsync("myTestingContainer", partitionKeyPath);
+    if (containerResponse.StatusCode == HttpStatusCode.Created || containerResponse.StatusCode == HttpStatusCode.OK)
     {
-        Console.WriteLine(response.StatusCode == HttpStatusCode.Created ? "Container created" : "Container already exists");
-        Container container = response.Container;
+        Console.WriteLine(containerResponse.StatusCode == HttpStatusCode.Created ? "Container created" : "Container already exists");
+        Container container = containerResponse.Container;
         Guid guid = Guid.NewGuid();
         string itemPartitionKey = "itemPartitionKey";
         dynamic item = new { id = guid.ToString(), name = "myName", myPartitionKey = itemPartitionKey };
@@ -116,18 +138,43 @@ try
         dynamic itemResponse = await container.CreateItemAsync(item);
         Console.WriteLine($"Created item in database with id: {itemResponse.Resource.id}");
 
+
         //Partial update
         PartitionKey partitionKey = new PartitionKey(myPartitionKey);
-        ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperations);
-
-        if(patchResponse.StatusCode == HttpStatusCode.OK)
+        
+        if(patchOperationList.Count <= 10)
         {
-            Console.WriteLine($"Patched item in database with id: {patchResponse.Resource.id}");
+            ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperations);
+
+            if (patchResponse.StatusCode == HttpStatusCode.OK)
+            {
+                Console.WriteLine($"Patched item in database with id: {patchResponse.Resource.id}");
+            }
+            else
+            {
+                Console.WriteLine($"Failed to patch item in database with id: {patchResponse.Resource.id}");
+            }
         }
         else
         {
-            Console.WriteLine($"Failed to patch item in database with id: {patchResponse.Resource.id}");
+            TransactionalBatchRequestOptions requestOptions = new TransactionalBatchRequestOptions();
+            TransactionalBatchItemRequestOptions itemRequestOptions = new TransactionalBatchItemRequestOptions();
+            TransactionalBatch batch = container.CreateTransactionalBatch(partitionKey);
+            const int maxSize = 10;
+            int batchCount = (int)Math.Ceiling((double)patchOperationList.Count / maxSize);
+            Enumerable.Range(0, batchCount).ToList().ForEach(i =>
+            {
+                List<PatchOperation> batchPatchOperations = patchOperationList.Skip(i * maxSize).Take(maxSize).ToList();
+                batch.PatchItem(item.id, batchPatchOperations);
+            });
+            TransactionalBatchResponse batchResponse = await batch.ExecuteAsync(requestOptions: requestOptions);
+            if (batchResponse.IsSuccessStatusCode)
+            {
+                dynamic lastResponse = batchResponse.GetOperationResultAtIndex<dynamic>(batchResponse.Count - 1).Resource;
+                Console.WriteLine(JsonConvert.SerializeObject(lastResponse, Formatting.Indented));
+            }
         }
+       
 
         ItemResponse<dynamic> patchResponse2 = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperationList2);
 
@@ -142,7 +189,8 @@ try
     }
 }
 catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound ||
-                                 ex.StatusCode == HttpStatusCode.BadRequest)
+                                 ex.StatusCode == HttpStatusCode.BadRequest||
+                                 ex.StatusCode == HttpStatusCode.FailedDependency)
 {
     Console.WriteLine($"CosmosException: {ex}");
 }
@@ -388,37 +436,37 @@ namespace CosmosDBPartialUpdateTypeConverter
         //need more testing for the corner cases
         public static List<PatchOperation> AddAppend(this List<PatchOperation> patchOperations, string path, object? value)
         {
-            patchOperations.Add(PatchOperation.Add($"/{path}/`", value));
+            patchOperations.Add(PatchOperation.Add($"{BuildPath(path)}/`", value));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddIncrement(this List<PatchOperation> patchOperations, string path, long value)
         {
-            patchOperations.Add(PatchOperation.Increment(path, value));
+            patchOperations.Add(PatchOperation.Increment(BuildPath(path), value));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddIncrement(this List<PatchOperation> patchOperations, string path, double value)
         {
-            patchOperations.Add(PatchOperation.Increment(path, value));
+            patchOperations.Add(PatchOperation.Increment(BuildPath(path), value));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddMove(this List<PatchOperation> patchOperations, string from, string path)
         {
-            patchOperations.Add(PatchOperation.Move(from, path));
+            patchOperations.Add(PatchOperation.Move(BuildPath(from), BuildPath(path)));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddRemove(this List<PatchOperation> patchOperations, string path)
         {
-            patchOperations.Add(PatchOperation.Remove(path));
+            patchOperations.Add(PatchOperation.Remove(BuildPath(path)));
             return patchOperations;
         }
 
         public static List<PatchOperation> AddReplace(this List<PatchOperation> patchOperations, string path, object? value)
         {
-            patchOperations.Add(PatchOperation.Replace(path, value));
+            patchOperations.Add(PatchOperation.Replace(BuildPath(path), value));
             return patchOperations;
         }
 
