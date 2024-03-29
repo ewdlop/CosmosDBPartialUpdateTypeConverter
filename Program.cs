@@ -41,7 +41,7 @@ dynamic sampleItem = new { id = "myId", name = "myName" };
 // not thread safe
 // need Unit tests
 // How does IEnumerable with Add Method truly works with collection initialization?
-// Does looking at IL helps?
+// Does looking at IL helps to understand how it works?
 PatchOperationList patchOperationList = new()
 {
     PatchOperation.Add("/age", 33),
