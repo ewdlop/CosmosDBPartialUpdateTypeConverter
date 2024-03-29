@@ -7,9 +7,17 @@ using Newtonsoft.Json.Linq;
 using System.Collections;
 using System.Net;
 using System.Reflection;
+using Microsoft.AspNetCore.JsonPatch;
+using Microsoft.AspNetCore.JsonPatch.Operations;
 
 //https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-getting-started?tabs=dotnet
-
+//https://learn.microsoft.com/en-us/aspnet/core/web-api/jsonpatch?view=aspnetcore-8.0
+//Microsoft.AspNetCore.JsonPatch
+//IETF RFC 6902 JSON Patch specification
+//https://tools.ietf.org/html/rfc6902
+//From Microsoft:
+//The Partial document update operation is based on the JSON Patch RFC. Property names in paths need to escape the ~ and / characters as ~0 and ~1, respectively.
+//Not to confused with Azure.JsonPatchDocument, this uses System.Text.Json for serialization and not Newtonsoft.Json
 
 const string connectionStringSecret = "MyCosmosDBConnectionString";
 const string databaseIdSecret = "MyCosmosDBDatabaseId";
@@ -28,9 +36,12 @@ dynamic sampleItem = new { id = "myId", name = "myName" };
 
 // sample codes
 // still need more testing
-// need to limit to 10 PatchOperations
 // need to add more error handling
 // need to not forget to add the "/" to the path
+// not thread safe
+// need Unit tests
+// How does IEnumerable with Add Method truly works with collection initialization?
+// Does looking at IL helps?
 PatchOperationList patchOperationList = new()
 {
     PatchOperation.Add("/age", 33),
@@ -55,6 +66,7 @@ PatchOperationList patchOperationList = new()
     {"test","123","456" }, //ignored
     ("","",""),//ignored
 };
+patchOperationList.Add("path", new object());
 
 PatchOperationList patchOperationList2 = new()
 {
@@ -72,13 +84,34 @@ PatchOperationList patchOperationList2 = new()
     }
 };
 
-PatchOperationList patchOperationList3 = new List<PatchOperation>();
-PatchOperationList patchOperationList4 = PatchOperation.Move("/from", "/to");
-PatchOperationList patchOperationList5 = [PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there")];
-PatchOperationList patchOperationList6 = new PatchOperationList { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") };
-PatchOperationList patchOperationList7 = new PatchOperationList(new List<PatchOperation> { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") });
+List<PatchOperation> values = [
+    PatchOperation.Move("from", "to"),
+    PatchOperation.Move("here", "there")
+];
 
-List<PatchOperation> patchOperations = patchOperationList;
+
+//Be careful with this primary constructor
+PatchOperationList patchOperationList3 = new(values);
+values.Add(PatchOperation.Move("from", "to")); // this will be added to patchOperationList3
+patchOperationList3.Add(new { Label = "label", Number = 44 }); // this will be added to original list values
+
+List<PatchOperation> values2 = [
+    PatchOperation.Move("from", "to"),
+    PatchOperation.Move("here", "there")
+];
+PatchOperationList patchOperationList4 = new([.. values2]);
+values2.Add(PatchOperation.Move("from", "to"));
+patchOperationList4.Add(new { Label = "label", Number = 44 });
+
+patchOperationList4 = new([.. values2]);
+values2.Add(PatchOperation.Move("from", "to"));
+patchOperationList4.Add(new { Label = "label", Number = 44 });
+
+PatchOperationList patchOperationList5 = PatchOperation.Move("/from", "/to");
+PatchOperationList patchOperationList6 = [PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there")];
+PatchOperationList patchOperationList7 = new PatchOperationList { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") };
+PatchOperationList patchOperationList8 = new PatchOperationList(new List<PatchOperation> { PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there") });
+
 patchOperationList.AddIncrement("age", 1);
 patchOperationList.AddIncrement("age", 2);
 patchOperationList.AddIncrement("age", 2);
@@ -93,7 +126,7 @@ patchOperationList3.Add(PatchOperation.Move("/from", "/to"), PatchOperation.Move
 IList<PatchOperation> patchOperations2 = new PatchOperationList();
 IReadOnlyList<PatchOperation> patchOperations3 = patchOperationList;
 
-PatchOperationList patchOperationList8 = new PatchOperationListBuilder()
+PatchOperationList patchOperationList9 = new PatchOperationListBuilder()
     .With(PatchOperation.Move("/from", "/to"))
     .WithAdd("age", 70)
     .WithAdd("address", new JObject
@@ -104,6 +137,11 @@ PatchOperationList patchOperationList8 = new PatchOperationListBuilder()
     })
     .WithAdd(new { Label = "label", Number = 41 })
     .Build();
+
+patchOperationList9 = new PatchOperationList()
+{
+    values.ToList()
+};
 
 for (int i = 0; i < patchOperationList.Count; i++)
 {
@@ -144,7 +182,7 @@ try
         
         if(patchOperationList.Count <= 10)
         {
-            ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperations);
+            ItemResponse<dynamic> patchResponse = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperationList);
 
             if (patchResponse.StatusCode == HttpStatusCode.OK)
             {
@@ -177,7 +215,7 @@ try
        
 
         ItemResponse<dynamic> patchResponse2 = await container.PatchItemAsync<dynamic>(item.id, partitionKey, patchOperationList2);
-
+        Console.WriteLine($"patchResponse2.Resource is {nameof(JObject)}: {patchResponse2.Resource is JObject}");
         if (patchResponse2.StatusCode == HttpStatusCode.OK)
         {
             Console.WriteLine($"Patched item in database with id: {patchResponse2.Resource.id}");
@@ -207,28 +245,27 @@ namespace CosmosDBPartialUpdateTypeConverter
 {
     /// <summary>
     ///Not done yet
-    ///Need to limit to 10 PatchOperations and more testing
+    ///Maybe to limit to 10 PatchOperations is not a good idea
+    ///Need more testing
+    ///Not thread safe
     ///https://learn.microsoft.com/en-us/azure/cosmos-db/partial-document-update-faq
     /// </summary>
-    public class PatchOperationList : IList<PatchOperation>, IReadOnlyList<PatchOperation>
+    public class PatchOperationList(List<PatchOperation> _patchOperations) : IList<PatchOperation>, IReadOnlyList<PatchOperation>
     {
-        private readonly List<PatchOperation> _patchOperations = [];
 
-        public static implicit operator PatchOperationList(List<PatchOperation> patchOperations) => new(patchOperations);
-        public static implicit operator PatchOperationList(PatchOperation[] patchOperations) => new([.. patchOperations]);
-        public static implicit operator PatchOperationList(PatchOperation patchOperation) => new(patchOperation);
-        public static implicit operator List<PatchOperation>(PatchOperationList patchOperation) => patchOperation._patchOperations;
-        
+        public static implicit operator PatchOperationList(List<PatchOperation> patchOperations) => new PatchOperationList([..patchOperations]); //shadow copy to prevent modifications to the original list
+        public static implicit operator PatchOperationList(PatchOperation[] patchOperations) => new PatchOperationList([..patchOperations]); //shadow copy to prevent modifications to the original list
+        public static implicit operator PatchOperationList(PatchOperation patchOperation) => new PatchOperationList(patchOperation);
         public PatchOperationList() : this([]) { }
-        
-        public PatchOperationList(IList<PatchOperation> patchOperations) => _patchOperations = [.. patchOperations];
 
-        public PatchOperationList(List<PatchOperation> patchOperations) => _patchOperations = [.. patchOperations];
+        public PatchOperationList(PatchOperationList patchOperationList) : this([.. patchOperationList]) { } //shadow copy to prevent modifications to the original list
 
-        public PatchOperationList(IEnumerable<PatchOperation> patchOperations) : this(patchOperations.ToList()) { }
-        
+        public PatchOperationList(IList<PatchOperation> patchOperations) : this([.. patchOperations]) { } //shadow copy to prevent modifications to the original list
+
+        public PatchOperationList(IEnumerable<PatchOperation> patchOperations) : this(patchOperations.ToList()) { } //shadow a copy to prevent modifications to the original list
+
         public PatchOperationList(PatchOperation patchOperation) : this([patchOperation]) { }
-        
+
         public int Count => _patchOperations.Count;
         
         public PatchOperation this[int index]
@@ -257,14 +294,35 @@ namespace CosmosDBPartialUpdateTypeConverter
             _patchOperations.Add(jObject);
         }
 
+        public void Add(JsonPatchDocument jsonPatchDocument)
+        {
+            ArgumentNullException.ThrowIfNull(jsonPatchDocument, nameof(jsonPatchDocument));
+            _patchOperations.Add(jsonPatchDocument);
+        }
+
+        public void Add(List<PatchOperation> operations) => _patchOperations.Add(operations);
+
         public void Add<T>(T entity)
             where T : class => _patchOperations.Add(entity);
 
         public void Add<T>(IEnumerable<T> entities)
             where T : class => _patchOperations.Add(entities);
 
-        public void Add<T>(params T[] entities)
+        public void Add<T>(List<T> entities)
             where T : class => _patchOperations.Add(entities);
+
+        public void Add<T>(params T[] entities)
+            where T : class
+        {
+            if(entities is PatchOperation[] patchOperations)
+            {
+                _patchOperations.Add(patchOperations);
+            }
+            else
+            {
+                _patchOperations.Add(entities);
+            }
+        }
 
         public void Add(object value, Func<PropertyInfo, bool>? propertyInfoFilter = null) => _patchOperations.Add(value, propertyInfoFilter);
 
@@ -331,9 +389,51 @@ namespace CosmosDBPartialUpdateTypeConverter
     /// </summary>
     public static class PatchOperationExtension
     {
-        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, params PatchOperation[] entities)
+        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, JsonPatchDocument jsonPatchDocument)
         {
-            patchOperations.AddRange(entities);
+            ArgumentNullException.ThrowIfNull(jsonPatchDocument, nameof(jsonPatchDocument));
+            //From Microsoft:
+            //Azure Cosmos DB partial document update is inspired by JSON Patch RFC 6902.
+            //There are other features such as Conditional Patch
+            //while some of the features of JSON Patch RFC 6902 such as (Copy, Test) have not been implemented.
+
+            //No-op for this case would be just don't do anything I suppose
+            foreach (var operation in jsonPatchDocument.Operations)
+            {
+                switch (operation.OperationType)
+                {
+                    case OperationType.Add:
+                        patchOperations.Add(PatchOperation.Add(operation.path, operation.value));
+                        break;
+                    case OperationType.Copy:
+                        break;
+                    case OperationType.Move:
+                        patchOperations.Add(PatchOperation.Move(operation.from, operation.path));
+                        break;
+                    case OperationType.Remove:
+                        patchOperations.Add(PatchOperation.Remove(operation.path));
+                        break;
+                    case OperationType.Replace:
+                        patchOperations.Add(PatchOperation.Replace(operation.path, operation.value));
+                        break;
+                    case OperationType.Test:
+                        break;
+                    default:
+                        break;
+                }
+            }
+            return patchOperations;
+        }
+
+        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, List<PatchOperation> operations)
+        {
+            patchOperations.AddRange(operations);
+            return patchOperations;
+        }
+
+        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, params PatchOperation[] operations)
+        {
+            patchOperations.AddRange(operations);
             return patchOperations;
         }
 
@@ -369,6 +469,14 @@ namespace CosmosDBPartialUpdateTypeConverter
                 string => Enumerable.Empty<PatchOperation>(),
                 _ => typeof(T).GetProperties().Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(entity)))
             });
+            return patchOperations;
+        }
+
+        public static List<PatchOperation> Add<T>(this List<PatchOperation> patchOperations, List<T> entities)
+            where T : class
+        {
+            patchOperations.AddRange(entities.Where(entity => entity is not string)
+                .SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(entity)))));
             return patchOperations;
         }
 
@@ -580,7 +688,7 @@ namespace CosmosDBPartialUpdateTypeConverter
         public PatchOperationListBuilder() : this(new List<PatchOperation>()) { }
         public PatchOperationListBuilder(IEnumerable<PatchOperation> patchOperations) : this(patchOperations.ToList()) { }
         public PatchOperationListBuilder(PatchOperation patchOperation) : this(new List<PatchOperation> { patchOperation }) { }
-        public PatchOperationListBuilder(params PatchOperation[] patchOperations) : this(patchOperations.ToList()) { }
+        public PatchOperationListBuilder(params PatchOperation[] patchOperations) : this(patchOperations.AsEnumerable()) { }
 
         public PatchOperationListBuilder With(PatchOperation patchOperation)
         {
@@ -595,9 +703,15 @@ namespace CosmosDBPartialUpdateTypeConverter
             return this;
         }
 
-        public PatchOperationListBuilder With(params PatchOperation[] patchOperation)
+        public PatchOperationListBuilder With(List<PatchOperation> entities)
         {
-            _patchOperations.AddRange(patchOperation);
+            _patchOperations.AddRange(entities);
+            return this;
+        }
+
+        public PatchOperationListBuilder With(params PatchOperation[] patchOperations)
+        {
+            _patchOperations.AddRange(patchOperations);
             return this;
         }
 
