@@ -121,6 +121,7 @@ patchOperationList.AddIncrement("age", 2);
 patchOperationList.AddMove("test", "test2");
 patchOperationList.AddRemove("test2");
 patchOperationList.AddReplace("age", 55);
+//patchOperationList.AddSet<object>((object)null); //throws ArgumentNullException
 
 patchOperationList3.Add(PatchOperation.Move("/from", "/to"), PatchOperation.Move("/here", "/there"));
 IList<PatchOperation> patchOperations2 = new PatchOperationList();
@@ -303,7 +304,11 @@ namespace CosmosDBPartialUpdateTypeConverter
         public void Add(List<PatchOperation> operations) => _patchOperations.Add(operations);
 
         public void Add<T>(T entity)
-            where T : class => _patchOperations.Add(entity);
+            where T : class
+        {
+            ArgumentNullException.ThrowIfNull(entity, nameof(entity));
+            _patchOperations.Add(entity);
+        }
 
         public void Add<T>(IEnumerable<T> entities)
             where T : class => _patchOperations.Add(entities);
@@ -324,7 +329,11 @@ namespace CosmosDBPartialUpdateTypeConverter
             }
         }
 
-        public void Add(object value, Func<PropertyInfo, bool>? propertyInfoFilter = null) => _patchOperations.Add(value, propertyInfoFilter);
+        public void Add(object value, Func<PropertyInfo, bool>? propertyInfoFilter = null)
+        {
+            ArgumentNullException.ThrowIfNull(value, nameof(value));
+            _patchOperations.Add(value, propertyInfoFilter);
+        }
 
         public void AddAppend(string path, object? value) => _patchOperations.AddAppend(path, value);
 
@@ -347,7 +356,11 @@ namespace CosmosDBPartialUpdateTypeConverter
         }
 
         public void AddSet<T>(T entity)
-            where T : class => _patchOperations.AddSet(entity);
+            where T : class
+        {
+            ArgumentNullException.ThrowIfNull(entity, nameof(entity));
+            _patchOperations.AddSet(entity);
+        }
 
         public void AddSet<T>(IEnumerable<T> entities)
             where T : class => _patchOperations.AddSet(entities);
