@@ -20,9 +20,25 @@ using OneOf;
 
 const string connectionStringSecret = "MyCosmosDBConnectionString";
 const string databaseIdSecret = "MyCosmosDBDatabaseId";
-string azureKeyVaultEndpoint = $"https://kv-ray81081506952833917.vault.azure.net/";
 
-SecretClient secretClient = new SecretClient(new Uri(azureKeyVaultEndpoint), new DefaultAzureCredential(true));
+Console.WriteLine("Hello from CosmosDB Partial Update!");
+
+//Azure Key Vault
+//https://docs.microsoft.com/en-us/azure/key-vault/general/basic-concepts
+//https://docs.microsoft.com/en-us/azure/key-vault/secrets/quick-create-net
+//https://docs.microsoft.com/en-us/azure/key-vault/secrets/quick-create-python
+//https://learn.microsoft.com/en-us/azure/key-vault/secrets/quick-create-node?tabs=azure-cli%2Cwindows
+
+Console.WriteLine("Please enter your Azure Key Vault endpoint:");
+string? azureKeyVaultEndpoint = Console.ReadLine();
+
+if (string.IsNullOrWhiteSpace(azureKeyVaultEndpoint))
+{
+    Console.WriteLine("Azure Key Vault endpoint is required.");
+    return;
+}
+
+SecretClient secretClient = new SecretClient(new Uri(azureKeyVaultEndpoint), new DefaultAzureCredential(includeInteractiveCredentials: true));
 Azure.Response<KeyVaultSecret> connectionStringSecretResponse = await secretClient.GetSecretAsync(connectionStringSecret);
 Azure.Response<KeyVaultSecret> databaseIdSecretResponse = await secretClient.GetSecretAsync(databaseIdSecret);
 
