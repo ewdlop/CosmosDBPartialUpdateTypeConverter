@@ -4,6 +4,8 @@ using Azure.Security.KeyVault.Keys.Cryptography;
 using Azure.Identity;
 using System.Text.Json;
 using System.Text;
+using Microsoft.VisualStudio.Services.WebApi.Patch.Json;
+using YijingCosmos.Encryption;
 
 namespace YijingCosmos.Encryption
 {
@@ -190,7 +192,10 @@ namespace YijingCosmos.Encryption
         {
             var operation = new JsonPatchOperation
             {
+#if false
                 OperationType = JsonPatchOperationType.Replace,
+#endif
+                Operation = Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Replace,
                 Path = "/readOnlyData",
                 Value = null // Will be set during encryption
             };
@@ -215,7 +220,7 @@ namespace YijingCosmos.Encryption
 }
 
 // Example usage
-public class Program
+public partial class Program
 {
     public static async Task Main()
     {

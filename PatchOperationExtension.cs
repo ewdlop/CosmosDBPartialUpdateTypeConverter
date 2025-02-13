@@ -1,8 +1,8 @@
 ﻿using Microsoft.Azure.Cosmos;
 using Newtonsoft.Json.Linq;
 using System.Reflection;
-using Microsoft.AspNetCore.JsonPatch;
 using Microsoft.AspNetCore.JsonPatch.Operations;
+using Microsoft.VisualStudio.Services.WebApi.Patch.Json;
 
 namespace CosmosDBPartialUpdateTypeConverter
 {
@@ -11,7 +11,7 @@ namespace CosmosDBPartialUpdateTypeConverter
     /// </summary>
     public static class PatchOperationExtension
     {
-        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, JsonPatchDocument jsonPatchDocument)
+        public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, Microsoft.AspNetCore.JsonPatch.JsonPatchDocument jsonPatchDocument)
         {
             ArgumentNullException.ThrowIfNull(jsonPatchDocument, nameof(jsonPatchDocument));
             //From Microsoft:
@@ -40,6 +40,8 @@ namespace CosmosDBPartialUpdateTypeConverter
                         break;
                     case OperationType.Test:
                         break;
+                    case OperationType.Invalid: //create an invalid patch operation[?]
+                        break;
                     default:
                         break;
                 }
@@ -48,6 +50,18 @@ namespace CosmosDBPartialUpdateTypeConverter
         }
 
         public static List<PatchOperation> Add(this List<PatchOperation> patchOperations, List<PatchOperation> operations)
+        {
+            patchOperations.AddRange(operations);
+            return patchOperations;
+        }
+
+        public static List<PatchOperation> Add<T>(this List<PatchOperation> patchOperations, List<PatchOperation<T>> operations)
+        {
+            patchOperations.AddRange(operations);
+            return patchOperations;
+        }
+
+        public static List<PatchOperation<T>> Add<T>(this List<PatchOperation<T>> patchOperations, List<PatchOperation<T>> operations)
         {
             patchOperations.AddRange(operations);
             return patchOperations;
@@ -115,7 +129,7 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(entities switch
             {
-                [string item1, string item2] => [PatchOperation.Add(BuildPath(item1), item2)],
+            [string item1, string item2] => [PatchOperation.Add(BuildPath(item1), item2)],
                 _ => entities.Where(entity => entity is not string).SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(entity))))
             });
             return patchOperations;
@@ -127,7 +141,7 @@ namespace CosmosDBPartialUpdateTypeConverter
             patchOperations.AddRange(value switch
             {
                 (string item1, object item2) => [PatchOperation.Add(BuildPath(item1), item2)],
-                (object item1, object item2) => [ PatchOperation.Add(BuildPath(item1.ToString()), item2)], //need to check null or do something
+                (object item1, object item2) => [PatchOperation.Add(BuildPath(item1.ToString()), item2)], //need to check null or do something
                 int or long or float or double or decimal or string or bool or null => Enumerable.Empty<PatchOperation>(),
                 _ => value.GetType().GetProperties().Where(propertyInfoFilter is not null ? propertyInfoFilter : _ => true)
                     .Select(property => PatchOperation.Add(BuildPath(property.Name), property.GetValue(value)))
@@ -160,7 +174,7 @@ namespace CosmosDBPartialUpdateTypeConverter
             }));
             return patchOperations;
         }
-        
+
         //For Appending to an json array
         //the path must exist first
         //need more testing for the corner cases
@@ -248,7 +262,7 @@ namespace CosmosDBPartialUpdateTypeConverter
         {
             patchOperations.AddRange(entities switch
             {
-                [string item1, string item2] => [PatchOperation.Set(BuildPath(item1), item2)],
+            [string item1, string item2] => [PatchOperation.Set(BuildPath(item1), item2)],
                 _ => entities.Where(entity => entity is not string).SelectMany(entity => entity.GetType().GetProperties().Select(property => PatchOperation.Set(BuildPath(property.Name), property.GetValue(entity))))
             });
             return patchOperations;
@@ -301,6 +315,67 @@ namespace CosmosDBPartialUpdateTypeConverter
         public static string BuildPath(string path)
         {
             return path.StartsWith('/') ? path : $"/{path}";
+        }
+
+        public static PatchOperation ToPatchOperation<T>(this PatchOperation<T> patchOperation)
+        {
+            return patchOperation.OperationType switch
+            {
+                PatchOperationType.Add => PatchOperation.Add(patchOperation.Path, patchOperation.Value),
+                PatchOperationType.Remove => PatchOperation.Remove(patchOperation.Path),
+                PatchOperationType.Replace => PatchOperation.Replace(patchOperation.Path, patchOperation.Value),
+                PatchOperationType.Set => PatchOperation.Set(patchOperation.Path, patchOperation.Value),
+                PatchOperationType.Increment => patchOperation switch
+                {
+                    PatchOperation<long> longPatchOperation => PatchOperation.Increment(patchOperation.Path, longPatchOperation.Value),
+                    PatchOperation<double> doublePatchOperation => PatchOperation.Increment(patchOperation.Path, doublePatchOperation.Value),
+                    _ => throw new NotSupportedException("Unsupported PatchOperation type")
+                },
+                PatchOperationType.Move => PatchOperation.Move(patchOperation.From, patchOperation.Path),
+                _ => throw new NotSupportedException("Unsupported PatchOperation type")
+            };
+        }
+
+        public static PatchOperation ToPatchOperation(this Operation operation)
+        {
+            return operation.OperationType switch
+            {
+                OperationType.Add => PatchOperation.Add(operation.path, operation.value),
+                OperationType.Remove => PatchOperation.Remove(operation.path),
+                OperationType.Replace => PatchOperation.Replace(operation.path, operation.value),
+                OperationType.Move => PatchOperation.Move(operation.from, operation.path),
+                OperationType.Copy => throw new NotSupportedException("Copy operation is not supported"),
+                OperationType.Test => throw new NotSupportedException("Test operation is not supported"),
+                _ => throw new NotSupportedException("Unsupported OperationType")
+            };
+        }
+
+        public static PatchOperation ToPatchOperation<T>(this Operation<T> operation) where T : class
+        {
+            return operation.OperationType switch
+            {
+                OperationType.Add => PatchOperation.Add(operation.path, operation.value),
+                OperationType.Remove => PatchOperation.Remove(operation.path),
+                OperationType.Replace => PatchOperation.Replace(operation.path, operation.value),
+                OperationType.Move => PatchOperation.Move(operation.from, operation.path),
+                OperationType.Copy => throw new NotSupportedException("Copy operation is not supported"),
+                OperationType.Test => throw new NotSupportedException("Test operation is not supported"),
+                _ => throw new NotSupportedException("Unsupported OperationType")
+            };
+        }
+
+        public static PatchOperation ToPatchOperation(this JsonPatchOperation jsonPatchOperation)
+        {
+            return jsonPatchOperation.Operation switch
+            {
+                Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Add => PatchOperation.Add(jsonPatchOperation.Path, jsonPatchOperation.Value),
+                Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Remove => PatchOperation.Remove(jsonPatchOperation.Path),
+                Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Replace => PatchOperation.Replace(jsonPatchOperation.Path, jsonPatchOperation.Value),
+                Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Move => PatchOperation.Move(jsonPatchOperation.From, jsonPatchOperation.Path),
+                Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Copy => throw new NotSupportedException("Copy operation is not supported"),
+                Microsoft.VisualStudio.Services.WebApi.Patch.Operation.Test => throw new NotSupportedException("Test operation is not supported"),
+                _ => throw new NotSupportedException("Unsupported OperationType")
+            };
         }
     }
 }
